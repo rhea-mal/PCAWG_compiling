@@ -1,0 +1,292 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+#merges all csv files into one data frame
+library(stringr)
+library(tidyverse)
+library(dtplyr)
+
+listfile <- list.files("/Users/rhea/Desktop/consensus_cnv/consensus.20170119.somatic.cna.icgc.public",pattern = "txt",full.names = T, recursive = TRUE)
+
+for (i in 1:length(listfile)){
+  if(i==1){
+    df <- read.table(listfile[i],header = TRUE)
+    name <- toString(listfile[i])
+    name <- str_replace(name, ".consensus.20170119.somatic.cna.txt", "")
+    name <- str_replace(name, "/Users/rhea/Desktop/consensus_cnv/consensus.20170119.somatic.cna.icgc.public/", "")
+    df[ , 'aliquot_id'] <- name
+  }
+  
+  else{
+    
+    new <- read.table(listfile[i],header = TRUE)
+    newname <- toString(listfile[i])
+    newname <- str_replace(newname, ".consensus.20170119.somatic.cna.txt", "")
+    newname <- str_replace(newname, "/Users/rhea/Desktop/consensus_cnv/consensus.20170119.somatic.cna.icgc.public/", "")
+    new[ , 'aliquot_id'] <- newname
+    new_names <- colnames(new)
+    df_names <- colnames(df)
+    if (ncol(new) > ncol(df)){
+      df.add <- setdiff(new_names, df_names)
+      for(i in 1:length(df.add)) {
+        df[df.add[i]] <- NA
+      }
+    }
+    else if (ncol(new) < ncol(df)) {
+      new.add <- setdiff(df_names, new_names)
+      for(i in 1:length(new.add)) {
+        new[new.add[i]] <- NA
+      }
+    }
+    df <- rbind(df, new)
+  }
+}
+
+```
+```{r}
+```
+
+
+```{r}
+samplesheet <- read.table(file = '/Users/rhea/Downloads/pcawg_sample_sheet.tsv', sep = '\t', header = TRUE)
+joined <- inner_join(df, samplesheet, by="aliquot_id")
+dim(df)
+dim(samplesheet)
+dim(joined)
+```
+```{r}
+first <- df[-c(6:8)]
+colnames(first) <- c("chromosome", "start", "end", "probes", "segmean")
+head(first)
+
+```
+```{r}
+library('dplyr')
+library('data.table')
+CNbins <- read.table(file = "/Users/rhea/Downloads/CancerSimulator-master/vignettes/HGSOC_cn_profiles_long_1.csv", sep = ",", header = TRUE)
+clustering <- umap_clustering(CNbins, field = "copy")
+CNbins_consensus <- consensuscopynumber(CNbins, cl = clustering$clustering) #cell_id becomes clone_id
+plotHeatmap(CNbins, tree = clustering$tree, clusters = clustering$clustering)
+```
+```{r}
+#ind_sample <- ovarian[ovarian$aliquot_id == '0009b464-b376-4fbc-8a56-da538269a02f', ]	
+#write.csv(ind_sample,"/Users/rhea/Desktop/PCAWGovariansample.csv", row.names = FALSE)
+#write.csv(CNbins_consensus,"/Users/rhea/Desktop/simulationsampleconsensus.csv", row.names = FALSE)
+write.csv(ovarian2,"/Users/rhea/Desktop/ovarianbinned.csv", row.names = FALSE)
+```
+
+```{r}
+##filters through pcawg samples for only ovarian
+
+starred <- joined[joined$star >= 3, ]
+ovarian <- starred[starred$dcc_project_code == 'OV-AU', ]
+ovarian <- na.omit(ovarian)
+```
+```{r}
+
+## REBINNING
+
+ovarian2 <- data.frame(matrix(ncol = 5, nrow = 0))
+colnames(ovarian2) <- c('chr', 'start', 'end', 'copy', 'ploidy')
+
+
+
+
+for (i in 1:nrow(ovarian)){
+  strt <- ovarian$start[i]
+  while (ovarian$end[i] - strt >= 500000) {
+  bin <- ceiling(strt/500000) * 500000
+  chr <- c(ovarian$chromosome[i])
+  start <- c(strt)
+  end <- c(bin)
+  copy <- c(ovarian$total_cn[i])
+  ploidy <- c(ovarian$ploidy[i])
+  new_data <- data.frame(chr, start, end, copy, ploidy)
+  ovarian2 <- rbind(ovarian2, new_data)
+  strt <- bin + 1
+  }
+  chr <- c(ovarian$chromosome[i])
+  start <- c(strt)
+  end <- c(ovarian$end[i])
+  copy <- c(ovarian$total_cn[i])
+  ploidy <- c(ovarian$ploidy[i])
+  new_data <- data.frame(chr, start, end, copy, ploidy)
+  ovarian2 <- rbind(ovarian2, new_data)
+}
+
+```
+
+```{r}
+ovarian2 <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(ovarian2) <- c('chr', 'start', 'end', 'copy')
+
+for (i in 1:nrow(ind_sample)){
+  strt <- ind_sample$start[i]
+  while (ind_sample$end[i] - strt >= 500000) {
+  bin <- ceiling(strt/500000) * 500000
+  chr <- c(ind_sample$chromosome[i])
+  start <- c(strt)
+  end <- c(bin)
+  copy <- c(ind_sample$total_cn[i])
+
+  new_data <- data.frame(chr, start, end, copy)
+  ovarian2 <- rbind(ovarian2, new_data)
+  strt <- bin + 1
+  }
+  chr <- c(ind_sample$chromosome[i])
+  start <- c(strt)
+  end <- c(ovarian$end[i])
+  copy <- c(ovarian$total_cn[i])
+  new_data <- data.frame(chr, start, end, copy)
+  ovarian2 <- rbind(ovarian2, new_data)
+}
+```
+
+```{r}
+##compare simulation copy number relative to pcawg
+
+comparison <- data.frame(matrix(ncol = 7, nrow = 0))
+##simulation up-regulated or down-regulated relative to PCAWG 
+colnames(comparison) <- c('chr', 'start', 'end', 'sim_CN', 'pcawg_CN', 'up', 'down')
+
+for (i in 1:nrow(ovarian2)) {
+  if ((ovarian2$start[i] - 1) %% 500000 != 0) {
+    rown <- which(CNbins_consensus$end == ovarian2$end[i] & CNbins_consensus$chr == ovarian2$chr[i])
+  }
+  else {
+    rown <- which(CNbins_consensus$start == ovarian2$start[i] & CNbins_consensus$chr == ovarian2$chr[i])
+  }
+  if (length(rown) != 0) {
+    up <- c(0)
+    down <- c(0)
+    sim_CN <- CNbins_consensus$copy[rown]
+    pcawg_CN <- ovarian2$copy[i]
+    if (sim_CN > pcawg_CN) {
+      up <- c(1)
+    }
+    if (sim_CN < pcawg_CN) {
+      down <- c(1)
+    }
+    new_data <-
+      data.frame(
+        chr = c(ovarian2$chr[i]),
+        start = c(CNbins_consensus$start[rown]),
+        end = c(CNbins_consensus$end[rown]),
+        sim_CN = c(sim_CN),
+        pcawg_CN = c(pcawg_CN),
+        up,
+        down
+      )
+    comparison <- rbind(comparison, new_data)
+  }
+}
+```
+```{r}
+  
+##compare SIMULATION relative to diploid (CN = 2)
+
+comp_sim_diploid <- data.frame(matrix(ncol = 6, nrow = 0))
+colnames(comp_sim_diploid) <- c('chr', 'start', 'end', 'sim_CN', 'up', 'down')
+
+for (i in 1:nrow(CNbins_consensus)) {
+  up <- c(0)
+  down <- c(0)
+  sim_CN <- CNbins_consensus$copy[i]
+  if (sim_CN > 2) {
+    up <- c(sim_CN - 2)
+    }
+  if (sim_CN < 2) {
+    down <- c(2 - sim_CN)
+  }
+    new_data <-
+      data.frame(
+        chr = c(CNbins_consensus$chr[i]),
+        start = c(CNbins_consensus$start[i]),
+        end = c(CNbins_consensus$end[i]),
+        sim_CN = c(sim_CN),
+        up,
+        down
+      )
+    comp_sim_diploid <- rbind(comp_sim_diploid, new_data)
+  }
+
+
+```
+```{r}
+##compare PCAWG relative to diploid (CN = 2)
+
+comp_PCAWG_diploid <- data.frame(matrix(ncol = 6, nrow = 0))
+colnames(comp_PCAWG_diploid) <- c('chr', 'start', 'end', 'pcawg_CN', 'up', 'down')
+
+for (i in 1:nrow(ovarian2)) {
+  up <- c(0)
+  down <- c(0)
+  pcawg_CN <- ovarian2$copy[i]
+  if (pcawg_CN > 2) {
+    up <- c(pcawg_CN - 2)
+    }
+  if (pcawg_CN < 2) {
+    down <- c(2 - pcawg_CN)
+  }
+    new_data <-
+      data.frame(
+        chr = c(ovarian2$chr[i]),
+        start = c(ovarian2$start[i]),
+        end = c(ovarian2$end[i]),
+        sim_CN = c(pcawg_CN),
+        up,
+        down
+      )
+    comp_PCAWG_diploid <- rbind(comp_PCAWG_diploid, new_data)
+  }
+```
+
+```{r}
+#ploidy <- read.table(file = '/Users/rhea/Desktop/consensus_cnv/consensus.20170217.purity.ploidy.txt', header = TRUE)
+#colnames(ploidy) <- c('aliquot_id', 'purity', 'ploidy', 'purity_conf_mad', 'wgd_status', 'wgd_uncertain')
+#ovarian <- inner_join(ovarian, ploidy, by="aliquot_id")
+
+
+# bin data
+library('signals')
+library('dplyr')
+#both_bins <- getCNstate(ovarian %>% dplyr::rename(cell_id = sample), ncores = 20)
+
+#both_bins <- both_bins %>%
+  #as.data.table() %>%
+  #na.omit() %>%
+  #group_by(chr, start, end, cell_id, ploidy) %>%
+  #summarize(total_cn = mean(total_cn), minor_cn = mean(minor_cn)) %>%
+  #ungroup()
+
+CNbins_chr <- CNbins %>%
+  as.data.table() %>%
+  .[chr != "Y"] %>%
+  .[, list(
+    gain = sum(copy > round(ploidy), na.rm = TRUE) / .N,
+    loss = sum(copy < round(ploidy), na.rm = TRUE) / .N,
+    loh = sum(Min == 0, na.rm = TRUE) / .N,
+    n = .N
+  ), by = .(chr, start, end)]
+```
+
+```{r}
+
+
+
+
+
+
+
+
+
+
+```
+
